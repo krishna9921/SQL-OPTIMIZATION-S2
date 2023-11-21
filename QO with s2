@@ -1,0 +1,188 @@
+#TRAINING: SQL OPTIMIZATION IN SINGLESTORE 
+
+
+FLEXIBLE PARALLELISM:
+
+SELECT COUNT(*) AS 'node count', SUM(num_spus) as 'cpu count FROM information _schema.mv_nodes WHERE type = 'leaf';
+
+CREATE DATABASE my_database1; USE my_database1; SHOW PARTITIONS;
+
+CREATE DATABASE my_database2 PARTITIONS = 8; USE my_database2; SHOW partitions;
+
+FLEXIBLE PARALLELISM:—
+
+SELECT * FROM information_schema.distributed_databases;
+	
+
+SHOW VARIABLES LIKE '%sub_to_physical%';
+
+SHOW VARIABLES LIKE '%query_parallelism_%';
+
+=================
+
+Create database  and tables;
+
+CREATE ROWSTORE TABLE employees(
+  employeeId int primary key,
+  lastName varchar(50),
+  firstName varchar(50),
+  extension varchar(10),
+  email varchar(100),
+  officeCode varchar(10),
+  reportsTo int,
+  jobTitle varchar(50),
+  shard key(employeeId)
+);
+—————————————
+
+
+DROP TABLE employees;
+CREATE ROWSTORE TABLE employees(
+  employeeId int,
+  lastName varchar(50),
+  firstName varchar(50),
+  extension varchar(10),
+  email varchar(100),
+  officeCode varchar(10),
+  managerId int,
+  jobTitle varchar(50),
+  primary key(employeeId, managerId),
+  shard key(managerId) );
+———————————————
+
+CREATE TABLE balance(
+  balanceUSD decimal(12,2),
+  balanceLocalCurrency decimal(12,2),
+  dateId int,
+  accountId int,
+  currencyId int,
+  bankId int,
+  bankCountryId int,
+  companyId int,
+  companyCountryId int,
+  sort key(dateId),
+    shard key(companyId)
+);
+3. The balance columnstore must recreated to optimize queries that return the sum of the balance for a particular bank on a specific date or dates.
+4. Execute the following commands in the SQL Editor to recreate the columnstore detailed above:  
+DROP TABLE balance;
+
+CREATE TABLE balance(
+  balanceUSD decimal(12,2),
+  balanceLocalCurrency decimal(12,2),
+  dateId int,
+  accountId int,
+  currencyId int,
+  bankId int,
+  bankCountryId int,
+  companyId int,
+  companyCountryId int,
+  sort key(dateId),
+  shard key(bankId)
+);
+
+
+
+
+=================
+
+SHARD KEY:-
+
+
+
+To check the cardinality of a table:
+======
+
+Ideal value is 1.0000
+
+Select (select count(DISTINCT(<column name>)) from <table_name>/(select count(*) from <table_name>) 
+
+
+—————
+
+*  OPTIMIZE TABLE <TABLE_NAME>  FLUSH;  ==> TO FLUSH DATA TO DISK
+
+
+SELECT DATABASE_NAME AS DATABASE,TABLE_NAME AS TABLE,STORAGE_TYPE AS TABLE_TYPE,STDDEV(R0WS)/AVG(ROWS) * 100 AS PERCENT SKEW, SUM(ROWS) AS NUMBER OF RECORDS FROM INFORMATION_SCHEMA.TABLE_STATISTICS WHERE PARTITION_TYPE=‘M%’ AND DATABASE_NAME=<DB NAME> GROUP BY 1,2 ORDER BY 1,2,3;
+
+
+
+
+Select distinct (‘partition’), count(*) from (
+SELECT PARTITION_ID() AS PARTITION,* FROM <TABLE>) GROUP BY  1 order by 1;
+
+
+====================================
+
+
+How to check the percentage of  NULLS in the table.
+
+Select count(*) from <table_name> where suffix is NULL; => No of records with null values
+
+Select count(*) from <table_name>; => total rows
+
+
+1/2 is the percentage 
+
+SELECT ( Select count(*) from <table_name> where suffix is NULL)/(Select count(*) from <table_name>) * 100;
+
+
+===========================================================
+
+
+LOAD DATA 5 MILLION RECORDS (BULK DATA) :-
+
+CREATE ROWSTORE TABLE IF NOT EXISTS t1 (
+  id bigint AUTO_INCREMENT,
+  a int,
+   b int,
+  c varchar(255),
+  PRIMARY KEY (id),
+  SHARD KEY(id)
+);
+
+insert into t1 (a,b,c) select round(rand()*100), round(rand()*100),lpad(conv(floor(rand()*pow(36,8)), 10, 16),12,10) from t1 as tbl1, t1 as tbl2 limit 1000000; insert into t1 (a,b,c) select round(rand()*100), round(rand()*100),lpad(conv(floor(rand()*pow(36,8)), 10, 16),12,10) from t1 as tbl1, t1 as tbl2 limit 1000000; insert into t1 (a,b,c) select round(rand()*100), round(rand()*100),lpad(conv(floor(rand()*pow(36,8)), 10, 16),12,10) from t1 as tbl1, t1 as tbl2 limit 1000000; insert into t1 (a,b,c) select round(rand()*100), round(rand()*100),lpad(conv(floor(rand()*pow(36,8)), 10, 16),12,10) from t1 as tbl1, t1 as tbl2 limit 1000000; insert into t1 (a,b,c) select round(rand()*100), round(rand()*100),lpad(conv(floor(rand()*pow(36,8)), 10, 16),12,10) from t1 as tbl1, t1 as tbl2 limit 4000000;
+
+
+——————————————
+
+ROW COUNT BY PARTITION :-
+
+
+select database_name, table_name, ordinal as partition_id, rows, memory_use
+from information_schema.table_statistics
+where 1=1 and database_name = 'db_mycompany'
+order by table_name, partition_id;
+
+
+Identify the data skew
+
+select database_name, table_name,
+floor(avg(rows)) as avg_rows,
+round(stddev(rows)/avg(rows),3) * 100 as row_skew,
+floor(avg(memory_use)) as avg_memory,
+round(stddev(memory_use)/avg(memory_use),3) * 100 as memory_skew
+from information_schema.table_statistics
+where 1=1 and database_name = 'db_mycompany'
+group by database_name, table_name
+having sum(rows) > 10000
+order by  table_name;
+
+—————————————
+
+
+JSON DATA
+
+CREATE ROWSTORE TABLE course_eval(
+  id bigint PRIMARY KEY,
+  course_id BIGINT,
+  course_info JSON,
+  instructor AS course_info::$instructor PERSISTED VARCHAR(50),
+  course_rating AS course_info::%courserating PERSISTED TINYINT,
+  instructor_rating AS course_info::instructorrating PERSISTED TINYINT,
+  materials_rating AS course_info::materialsrating PERSISTED TINYINT,
+  comment AS course_info::comment PERSISTED TEXT,
+  KEY(instructor),
+  SHARD KEY(id)
+);
+
